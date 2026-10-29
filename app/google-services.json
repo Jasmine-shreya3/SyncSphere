@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "828548105744",
+    "project_id": "syncsphere-ef839",
+    "storage_bucket": "syncsphere-ef839.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:828548105744:android:99379d36998aa1c31cac95",
+        "android_client_info": {
+          "package_name": "com.voxbridge.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZJETPoNsIeb4IraEY1gd2KhKz8D-mOTU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
