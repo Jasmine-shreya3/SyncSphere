@@ -1,6 +1,7 @@
 package com.voxbridge.ai
 
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -12,41 +13,90 @@ data class RemoteChatMessage(
     val senderEmail: String = "",
     val text: String = "",
     val senderLanguage: String = "en",
+    val messageType: String = "text",
     val createdAt: Long = 0L
 )
 
 object FirebaseChatRepository {
-    private val auth = FirebaseAuth.getInstance()
-    private val db = FirebaseFirestore.getInstance()
+    private val auth: FirebaseAuth
+        get() = FirebaseAuth.getInstance()
 
     private val messages
-        get() = db.collection("publicRooms")
+        get() = FirebaseFirestore.getInstance()
+            .collection("publicRooms")
             .document("global")
             .collection("messages")
 
-    fun currentUser() = auth.currentUser
+    fun currentUser(): FirebaseUser? = auth.currentUser
 
-    fun signUp(email: String, password: String, callback: (Boolean, String) -> Unit) {
-        auth.createUserWithEmailAndPassword(email.trim(), password)
-            .addOnCompleteListener { task ->
-                if (task.isSuccessful) callback(true, "Account created")
-                else callback(false, task.exception?.localizedMessage ?: "Sign-up failed")
-            }
+    fun signOut() {
+        auth.signOut()
     }
 
-    fun signIn(email: String, password: String, callback: (Boolean, String) -> Unit) {
+    fun signIn(
+        email: String,
+        password: String,
+        callback: (Boolean, String) -> Unit
+    ) {
         auth.signInWithEmailAndPassword(email.trim(), password)
             .addOnCompleteListener { task ->
-                if (task.isSuccessful) callback(true, "Signed in")
-                else callback(false, task.exception?.localizedMessage ?: "Sign-in failed")
+                callback(
+                    task.isSuccessful,
+                    if (task.isSuccessful) "Signed in successfully"
+                    else task.exception?.localizedMessage ?: "Sign in failed"
+                )
             }
     }
 
-    fun signOut() = auth.signOut()
+    fun signUp(
+        email: String,
+        password: String,
+        callback: (Boolean, String) -> Unit
+    ) {
+        auth.createUserWithEmailAndPassword(email.trim(), password)
+            .addOnCompleteListener { task ->
+                callback(
+                    task.isSuccessful,
+                    if (task.isSuccessful) "Account created successfully"
+                    else task.exception?.localizedMessage ?: "Sign up failed"
+                )
+            }
+    }
 
+    // Supports: sendMessage(text, language) { success, message -> ... }
     fun sendMessage(
         text: String,
         senderLanguage: String,
+        callback: (Boolean, String) -> Unit
+    ) {
+        sendMessage(text, senderLanguage, callback, "text")
+    }
+
+    // Supports the older positional-callback voice call.
+    fun sendMessage(
+        text: String,
+        senderLanguage: String,
+        callback: (Boolean, String) -> Unit,
+        messageType: String
+    ) {
+        saveMessage(text, senderLanguage, messageType, callback)
+    }
+
+    // Supports: sendMessage(text = ..., senderLanguage = ...,
+    //                       messageType = "voice") { success, message -> ... }
+    fun sendMessage(
+        text: String,
+        senderLanguage: String,
+        messageType: String,
+        callback: (Boolean, String) -> Unit
+    ) {
+        saveMessage(text, senderLanguage, messageType, callback)
+    }
+
+    private fun saveMessage(
+        text: String,
+        senderLanguage: String,
+        messageType: String,
         callback: (Boolean, String) -> Unit
     ) {
         val user = auth.currentUser
@@ -61,18 +111,20 @@ object FirebaseChatRepository {
             return
         }
 
-        val data = hashMapOf(
+        val data = hashMapOf<String, Any>(
             "senderId" to user.uid,
             "senderEmail" to (user.email ?: ""),
             "text" to cleanText,
-            "senderLanguage" to senderLanguage,
+            "senderLanguage" to senderLanguage.trim().lowercase().ifEmpty { "en" },
+            "messageType" to if (messageType == "voice") "voice" else "text",
+            "isFinal" to true,
             "createdAt" to FieldValue.serverTimestamp()
         )
 
         messages.add(data)
-            .addOnSuccessListener { callback(true, "Sent") }
-            .addOnFailureListener {
-                callback(false, it.localizedMessage ?: "Could not send message")
+            .addOnSuccessListener { callback(true, "Message sent") }
+            .addOnFailureListener { error ->
+                callback(false, error.localizedMessage ?: "Message send failed")
             }
     }
 
@@ -82,29 +134,28 @@ object FirebaseChatRepository {
     ): ListenerRegistration {
         return messages
             .orderBy("createdAt", Query.Direction.ASCENDING)
+            .limitToLast(100)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     onError(error.localizedMessage ?: "Unable to load messages")
                     return@addSnapshotListener
                 }
 
-                if (snapshot == null) {
-                    onMessages(emptyList())
-                    return@addSnapshotListener
-                }
+                val chatMessages: List<RemoteChatMessage> =
+                    snapshot?.documents?.map { document ->
+                        RemoteChatMessage(
+                            id = document.id,
+                            senderId = document.getString("senderId") ?: "",
+                            senderEmail = document.getString("senderEmail") ?: "",
+                            text = document.getString("text") ?: "",
+                            senderLanguage = document.getString("senderLanguage") ?: "en",
+                            messageType = document.getString("messageType") ?: "text",
+                            createdAt = document.getTimestamp("createdAt")
+                                ?.toDate()?.time ?: 0L
+                        )
+                    } ?: emptyList()
 
-                val result = snapshot.documents.mapNotNull { document ->
-                    val text = document.getString("text") ?: return@mapNotNull null
-                    RemoteChatMessage(
-                        id = document.id,
-                        senderId = document.getString("senderId") ?: "",
-                        senderEmail = document.getString("senderEmail") ?: "",
-                        text = text,
-                        senderLanguage = document.getString("senderLanguage") ?: "en",
-                        createdAt = document.getTimestamp("createdAt")?.toDate()?.time ?: 0L
-                    )
-                }
-                onMessages(result)
+                onMessages(chatMessages)
             }
     }
 }

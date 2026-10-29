@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,7 +64,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private data class SpherePalette(
+data class SpherePalette(
     val background: Color,
     val surface: Color,
     val text: Color,
@@ -83,17 +86,17 @@ private fun palette(dark: Boolean) = if (dark) {
     )
 } else {
     SpherePalette(
-        background = Color(0xFFF7F4FF),
+        background = Color(0xFFF3F6FF),
         surface = Color.White,
-        text = Color(0xFF24213A),
-        muted = Color(0xFF77718D),
-        primary = Color(0xFF7555D9),
-        incoming = Color(0xFFECE7FA),
-        outgoing = Color(0xFFDCD0FF)
+        text = Color(0xFF18233F),
+        muted = Color(0xFF65728E),
+        primary = Color(0xFF5655E8),
+        incoming = Color(0xFFFFFFFF),
+        outgoing = Color(0xFFDCE6FF)
     )
 }
 
-private data class ChatLanguage(
+data class ChatLanguage(
     val label: String,
     val code: String
 )
@@ -104,10 +107,10 @@ private val languages = listOf(
     ChatLanguage("हिन्दी (Hindi)", "hi")
 )
 
-private fun languageLabel(code: String): String =
+fun languageLabel(code: String): String =
     languages.firstOrNull { it.code == code }?.label ?: "English"
 
-private fun mlKitLanguage(code: String): String? = when (code) {
+fun mlKitLanguage(code: String): String? = when (code) {
     "en" -> TranslateLanguage.ENGLISH
     "ta" -> TranslateLanguage.TAMIL
     "hi" -> TranslateLanguage.HINDI
@@ -131,7 +134,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = p.background
                 ) {
-                    if (signedIn && FirebaseChatRepository.currentUser() != null) {
+                    if (signedIn &&
+                        FirebaseChatRepository.currentUser() != null
+                    ) {
                         ChatScreen(
                             p = p,
                             darkMode = darkMode,
@@ -309,23 +314,32 @@ private fun ChatScreen(
     onSignOut: () -> Unit
 ) {
     val user = FirebaseChatRepository.currentUser()
+
     var myLanguage by remember { mutableStateOf("en") }
     var speechTargetLanguage by remember { mutableStateOf("ta") }
+    var autoRead by remember { mutableStateOf(true) }
+    var outputMode by remember { mutableStateOf("Both") }
     var draft by remember { mutableStateOf("") }
-    var draftLanguage by remember { mutableStateOf("en") }
     var chatMessages by remember {
         mutableStateOf(emptyList<RemoteChatMessage>())
     }
     var status by remember { mutableStateOf("Connecting to chat…") }
     var languageMenu by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
+    var showOptions by remember { mutableStateOf(false) }
+    var showVoice by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) listState.animateScrollToItem(chatMessages.lastIndex)
+    }
 
     DisposableEffect(Unit) {
         val registration: ListenerRegistration =
             FirebaseChatRepository.listenMessages(
                 onMessages = { messages ->
                     chatMessages = messages
-                    status = "Live chat connected"
+                    status = "Chat synced · ${messages.size} messages"
                 },
                 onError = { error ->
                     status = error
@@ -341,190 +355,180 @@ private fun ChatScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(p.background)
-            .padding(horizontal = 16.dp)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 12.dp)
     ) {
-        Spacer(Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .background(p.primary, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("✦", color = Color.White, fontSize = 25.sp)
-            }
-
-            Spacer(Modifier.width(10.dp))
-
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "SyncSphere",
-                    color = p.text,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(status, color = p.muted, fontSize = 12.sp)
-            }
-
-            Text("Dark", color = p.text, fontSize = 12.sp)
-            Switch(
-                checked = darkMode,
-                onCheckedChange = onDarkModeChange
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
+        Spacer(Modifier.height(8.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = p.surface)
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = p.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-            Column(Modifier.padding(16.dp)) {
-                Text(
-                    "Your writing language",
-                    color = p.muted,
-                    fontSize = 13.sp
-                )
-                Spacer(Modifier.height(8.dp))
-
-                Box {
-                    OutlinedButton(
-                        onClick = { languageMenu = true }
-                    ) {
-                        Text(languageLabel(myLanguage), color = p.text)
-                        Text("  ▾", color = p.primary)
-                    }
-
-                    DropdownMenu(
-                        expanded = languageMenu,
-                        onDismissRequest = { languageMenu = false }
-                    ) {
-                        languages.forEach { language ->
-                            DropdownMenuItem(
-                                text = { Text(language.label) },
-                                onClick = {
-                                    myLanguage = language.code
-                                    languageMenu = false
-                                }
-                            )
-                        }
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(44.dp).background(p.primary, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) { Text("✦", color = Color.White, fontSize = 25.sp) }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("SyncSphere", color = p.text, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text(status, color = p.muted, fontSize = 11.sp, maxLines = 1)
                 }
-
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Your messages are labelled with this language. " +
-                            "Incoming messages translate to your language.",
-                    color = p.muted,
-                    fontSize = 12.sp
-                )
+                TextButton(onClick = { showOptions = !showOptions }) {
+                    Text(if (showOptions) "Close" else "⚙ Settings", color = p.primary, fontSize = 12.sp)
+                }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        // Keep controls compact. Tap Options to change language, output or theme.
+        if (showOptions) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = p.surface)
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Your language", color = p.text, modifier = Modifier.weight(1f))
+                        Box {
+                            OutlinedButton(onClick = { languageMenu = true }) {
+                                Text(languageLabel(myLanguage) + " ▾", color = p.text)
+                            }
+                            DropdownMenu(
+                                expanded = languageMenu,
+                                onDismissRequest = { languageMenu = false }
+                            ) {
+                                languages.forEach { language ->
+                                    DropdownMenuItem(
+                                        text = { Text(language.label) },
+                                        onClick = {
+                                            myLanguage = language.code
+                                            languageMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Text("Receive as", color = p.text, fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("Text", "Speech", "Both").forEach { mode ->
+                            OutlinedButton(
+                                onClick = {
+                                    outputMode = mode
+                                    autoRead = mode != "Text"
+                                },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+                            ) { Text(if (outputMode == mode) "✓ $mode" else mode, fontSize = 12.sp) }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Dark mode", color = p.text, modifier = Modifier.weight(1f))
+                        Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
+                        TextButton(onClick = onSignOut) { Text("Sign out") }
+                    }
+                }
+            }
+        }
 
+        Spacer(Modifier.height(9.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Community chat",
-                    color = p.text,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "Signed in as ${user?.email ?: "user"}",
-                    color = p.muted,
-                    fontSize = 11.sp
-                )
+            Text("Community chat", color = p.text, fontSize = 19.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(languageLabel(myLanguage), color = p.primary, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(17.dp),
+            colors = CardDefaults.cardColors(containerColor = p.surface)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🎙 Voice messages", color = p.text, fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(onClick = { showVoice = !showVoice }) {
+                    Text(if (showVoice) "Hide ▲" else "Open ▼", color = p.primary)
+                }
             }
-
-            TextButton(onClick = onSignOut) {
-                Text("Sign out", color = p.primary)
+            if (showVoice) {
+                VoiceTranslationControls(
+                    p = p,
+                    sourceLanguage = myLanguage,
+                    targetLanguage = speechTargetLanguage,
+                    onTargetLanguageChange = { speechTargetLanguage = it }
+                )
             }
         }
-
-        Spacer(Modifier.height(8.dp))
-
+        Spacer(Modifier.height(5.dp))
         LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp, horizontal = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(chatMessages, key = { it.id }) { message ->
                 MessageBubble(
                     message = message,
                     isMine = message.senderId == user?.uid,
                     targetLanguage = myLanguage,
+                    autoRead = autoRead,
                     p = p
                 )
             }
         }
-
-        Spacer(Modifier.height(10.dp))
-
+        Spacer(Modifier.height(6.dp))
         Card(
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = p.surface)
+            colors = CardDefaults.cardColors(containerColor = p.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
         ) {
-            Column(Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.padding(8.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Write a message…") },
-                    maxLines = 4
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Type your message…") },
+                    minLines = 1,
+                    maxLines = 3,
+                    shape = RoundedCornerShape(14.dp)
                 )
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        enabled = draft.isNotBlank() && !sending,
-                        onClick = {
-                            val textToSend = draft.trim()
-                            sending = true
-
-                            FirebaseChatRepository.sendMessage(
-                                textToSend,
-                                myLanguage
-                            ) { success, result ->
-                                sending = false
-
-                                if (success) {
-                                    draft = ""
-                                    status = "Message sent"
-                                } else {
-                                    status = result
-                                }
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = p.primary
-                        )
-                    ) {
-                        Text(
-                            if (sending) "Sending…" else "Send  ➤",
-                            color = Color.White
-                        )
-                    }
-                }
+                Spacer(Modifier.width(7.dp))
+                Button(
+                    enabled = draft.isNotBlank() && !sending,
+                    onClick = {
+                        val textToSend = draft.trim()
+                        sending = true
+                        FirebaseChatRepository.sendMessage(textToSend, myLanguage) { success, result ->
+                            sending = false
+                            if (success) {
+                                draft = ""
+                                status = "Message sent"
+                            } else status = result
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = p.primary),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 13.dp),
+                    modifier = Modifier.height(54.dp)
+                ) { Text(if (sending) "…" else "➤", color = Color.White, fontSize = 20.sp) }
             }
         }
-
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(6.dp))
     }
 }
 
@@ -533,6 +537,7 @@ private fun MessageBubble(
     message: RemoteChatMessage,
     isMine: Boolean,
     targetLanguage: String,
+    autoRead: Boolean,
     p: SpherePalette
 ) {
     Row(
@@ -545,7 +550,7 @@ private fun MessageBubble(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.88f)
+                .fillMaxWidth(0.86f)
                 .background(
                     color = if (isMine) p.outgoing else p.incoming,
                     shape = RoundedCornerShape(
@@ -555,7 +560,7 @@ private fun MessageBubble(
                         bottomEnd = if (isMine) 4.dp else 18.dp
                     )
                 )
-                .padding(14.dp)
+                .padding(horizontal = 15.dp, vertical = 12.dp)
         ) {
             Text(
                 if (isMine) "You"
@@ -566,11 +571,14 @@ private fun MessageBubble(
             )
 
             Spacer(Modifier.height(5.dp))
-            Text(message.text, color = p.text, fontSize = 16.sp)
+            if (message.messageType == "voice") {
+                Text("🎤 Voice transcript · finalized", color = p.primary, fontSize = 11.sp)
+            }
+            Text(message.text, color = p.text, fontSize = 16.sp, lineHeight = 23.sp)
 
             if (!isMine && message.senderLanguage != targetLanguage) {
                 Spacer(Modifier.height(8.dp))
-                TranslatedText(message, targetLanguage, p)
+                TranslatedText(message, targetLanguage, autoRead, p)
             }
 
             Spacer(Modifier.height(6.dp))
@@ -594,8 +602,10 @@ private fun MessageBubble(
 private fun TranslatedText(
     message: RemoteChatMessage,
     targetLanguage: String,
+    autoRead: Boolean,
     p: SpherePalette
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var translated by remember(message.id, targetLanguage) {
         mutableStateOf("")
     }
@@ -620,6 +630,12 @@ private fun TranslatedText(
             return@LaunchedEffect
         }
 
+        if (source == target) {
+            translated = message.text
+            translationStatus = ""
+            return@LaunchedEffect
+        }
+
         var translator: Translator? = null
 
         try {
@@ -636,12 +652,30 @@ private fun TranslatedText(
 
             translated = translator.translate(message.text).await()
             translationStatus = ""
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             translationStatus =
                 "Translation unavailable. Check internet and try again."
         } finally {
             translator?.close()
         }
+    }
+
+    DisposableEffect(message.id, targetLanguage, autoRead, translated) {
+        var engine: android.speech.tts.TextToSpeech? = null
+        if (autoRead && translated.isNotBlank()) {
+            engine = android.speech.tts.TextToSpeech(context) { code ->
+                if (code == android.speech.tts.TextToSpeech.SUCCESS) {
+                    val locale = when (targetLanguage) {
+                        "ta" -> Locale.forLanguageTag("ta-IN")
+                        "hi" -> Locale.forLanguageTag("hi-IN")
+                        else -> Locale.US
+                    }
+                    engine?.language = locale
+                    engine?.speak(translated, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, message.id)
+                }
+            }
+        }
+        onDispose { engine?.stop(); engine?.shutdown() }
     }
 
     Column {

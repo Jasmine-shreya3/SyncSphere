@@ -1,4 +1,3 @@
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -7,6 +6,7 @@ plugins {
 
 android {
     namespace = "com.voxbridge.ai"
+
     compileSdk {
         version = release(37)
     }
@@ -57,6 +57,9 @@ dependencies {
 
     // ML Kit translation
     implementation("com.google.mlkit:translate:17.0.3")
+
+    // Gemini AI
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
 
     // Coroutines
     implementation(

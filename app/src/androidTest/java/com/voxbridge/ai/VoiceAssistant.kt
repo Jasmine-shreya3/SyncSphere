@@ -16,7 +16,12 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -32,9 +37,7 @@ fun VoiceAssistant(
 ) {
     val context = LocalContext.current
 
-    var status by remember {
-        mutableStateOf("Tap to speak")
-    }
+    var status by remember { mutableStateOf("Tap to speak") }
 
     var hasPermission by remember {
         mutableStateOf(
@@ -45,17 +48,16 @@ fun VoiceAssistant(
         )
     }
 
-    val permissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
-            hasPermission = granted
-            status = if (granted) {
-                "Permission granted. Tap to speak"
-            } else {
-                "Microphone permission denied"
-            }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasPermission = granted
+        status = if (granted) {
+            "Permission granted. Tap to speak"
+        } else {
+            "Microphone permission denied"
         }
+    }
 
     val tts = remember {
         TextToSpeech(context) {}
@@ -71,9 +73,7 @@ fun VoiceAssistant(
     Button(
         onClick = {
             if (!hasPermission) {
-                permissionLauncher.launch(
-                    Manifest.permission.RECORD_AUDIO
-                )
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 return@Button
             }
 
@@ -101,11 +101,13 @@ fun VoiceAssistant(
                     }
 
                     override fun onBeginningOfSpeech() {}
+
                     override fun onRmsChanged(rmsdB: Float) {}
+
                     override fun onBufferReceived(buffer: ByteArray?) {}
 
                     override fun onEndOfSpeech() {
-                        status = "Translating..."
+                        status = "Processing speech..."
                     }
 
                     override fun onError(error: Int) {
@@ -119,6 +121,7 @@ fun VoiceAssistant(
                                 SpeechRecognizer.RESULTS_RECOGNITION
                             )
                             ?.firstOrNull()
+                            ?.trim()
 
                         if (spoken.isNullOrBlank()) {
                             status = "No speech detected"
@@ -126,7 +129,22 @@ fun VoiceAssistant(
                             return
                         }
 
+                        // Display the recognized speech locally.
                         onResult(spoken)
+
+                        // Send the original voice transcript to shared Firebase chat.
+                        status = "Sending voice message..."
+
+                        FirebaseChatRepository.sendMessage(
+                            text = spoken,
+                            senderLanguage = source
+                        ) { success, message ->
+                            status = if (success) {
+                                "Voice message sent. Translating..."
+                            } else {
+                                "Message not sent: $message"
+                            }
+                        }
 
                         val options = TranslatorOptions.Builder()
                             .setSourceLanguage(source)
@@ -139,13 +157,18 @@ fun VoiceAssistant(
                             .addOnSuccessListener {
                                 translator.translate(spoken)
                                     .addOnSuccessListener { translated ->
+                                        // Return the translation to the caller.
+                                        // Do not send it as a second Firebase message.
                                         onResult(translated)
-                                        status =
-                                            "Translation complete. Speaking..."
 
-                                        val result = tts.setLanguage(
-                                            Locale.forLanguageTag(targetLanguage)
-                                        )
+                                        status = "Translation complete. Speaking..."
+
+                                        val ttsLanguage =
+                                            Locale.forLanguageTag(
+                                                speechLocaleTag(targetLanguage)
+                                            )
+
+                                        val result = tts.setLanguage(ttsLanguage)
 
                                         if (
                                             result != TextToSpeech.LANG_MISSING_DATA &&
@@ -159,7 +182,7 @@ fun VoiceAssistant(
                                             )
                                         } else {
                                             status =
-                                                "Translation done; TTS language unavailable"
+                                                "Translated; speech language unavailable"
                                         }
 
                                         translator.close()
@@ -173,15 +196,13 @@ fun VoiceAssistant(
                             }
                             .addOnFailureListener {
                                 status =
-                                    "Could not download language model. Check internet."
+                                    "Could not download translation model. Check internet."
                                 translator.close()
                                 recognizer.destroy()
                             }
                     }
 
-                    override fun onPartialResults(
-                        partialResults: Bundle?
-                    ) {}
+                    override fun onPartialResults(partialResults: Bundle?) {}
 
                     override fun onEvent(
                         eventType: Int,
@@ -195,7 +216,7 @@ fun VoiceAssistant(
             ).apply {
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE,
-                    sourceLanguage
+                    speechLocaleTag(sourceLanguage)
                 )
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE_MODEL,
@@ -218,7 +239,7 @@ fun VoiceAssistant(
     Button(
         onClick = {
             status =
-                "LiveKit connection requires the secure token service."
+                "LiveKit calling is not connected yet. Voice translation works separately."
         }
     ) {
         Text("Prepare LiveKit Call")
@@ -226,7 +247,7 @@ fun VoiceAssistant(
 }
 
 private fun languageCode(language: String): String? {
-    return when (language.lowercase()) {
+    return when (language.trim().lowercase()) {
         "en", "en-us", "english" ->
             TranslateLanguage.ENGLISH
 
@@ -236,6 +257,16 @@ private fun languageCode(language: String): String? {
         "hi", "hi-in", "hindi" ->
             TranslateLanguage.HINDI
 
-        else -> TranslateLanguage.fromLanguageTag(language)
+        else ->
+            TranslateLanguage.fromLanguageTag(language)
+    }
+}
+
+private fun speechLocaleTag(language: String): String {
+    return when (language.trim().lowercase()) {
+        "en", "english" -> "en-US"
+        "ta", "tamil" -> "ta-IN"
+        "hi", "hindi" -> "hi-IN"
+        else -> language
     }
 }
