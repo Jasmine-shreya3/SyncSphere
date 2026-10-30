@@ -1,272 +1,218 @@
-
 package com.voxbridge.ai
 
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.TranslatorOptions
-import java.util.Locale
 
 @Composable
-fun VoiceAssistant(
+fun VoiceTranslationControls(
+    p: SpherePalette,
     sourceLanguage: String,
     targetLanguage: String,
-    onResult: (String) -> Unit
+    onTargetLanguageChange: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val handler = remember { Handler(Looper.getMainLooper()) }
+    var live by remember { mutableStateOf(false) }
+    var recordOnce by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var permissionForLive by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Mic ON for automatic translated conversation.") }
+    val recognizer = remember(context) {
+        if (SpeechRecognizer.isRecognitionAvailable(context))
+            SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    var restart by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingRestart by remember { mutableStateOf<Runnable?>(null) }
 
-    var status by remember { mutableStateOf("Tap to speak") }
-
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-        )
+    fun scheduleRestart() {
+        pendingRestart?.let { handler.removeCallbacks(it) }
+        if (!live || recordOnce) return
+        val task = Runnable { if (live && !listening) restart?.invoke() }
+        pendingRestart = task
+        handler.postDelayed(task, 650L)
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasPermission = granted
-        status = if (granted) {
-            "Permission granted. Tap to speak"
-        } else {
-            "Microphone permission denied"
+    fun startListening() {
+        if (recognizer == null) { status = "Speech recognition unavailable"; live = false; return }
+        if (listening) return
+        val locale = when (sourceLanguage) {
+            "ta" -> "ta-IN"
+            "hi" -> "hi-IN"
+            else -> "en-US"
         }
-    }
-
-    val tts = remember {
-        TextToSpeech(context) {}
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            tts.stop()
-            tts.shutdown()
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
-    }
-
-    Button(
-        onClick = {
-            if (!hasPermission) {
-                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                return@Button
-            }
-
-            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                status = "Speech recognition unavailable"
-                return@Button
-            }
-
-            val source = languageCode(sourceLanguage)
-            val target = languageCode(targetLanguage)
-
-            if (source == null || target == null) {
-                status = "Unsupported language"
-                return@Button
-            }
-
-            val recognizer =
-                SpeechRecognizer.createSpeechRecognizer(context)
-
-            recognizer.setRecognitionListener(
-                object : RecognitionListener {
-
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        status = "Listening..."
-                    }
-
-                    override fun onBeginningOfSpeech() {}
-
-                    override fun onRmsChanged(rmsdB: Float) {}
-
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-
-                    override fun onEndOfSpeech() {
-                        status = "Processing speech..."
-                    }
-
-                    override fun onError(error: Int) {
-                        status = "Speech error: $error. Please try again."
-                        recognizer.destroy()
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        val spoken = results
-                            ?.getStringArrayList(
-                                SpeechRecognizer.RESULTS_RECOGNITION
-                            )
-                            ?.firstOrNull()
-                            ?.trim()
-
-                        if (spoken.isNullOrBlank()) {
-                            status = "No speech detected"
-                            recognizer.destroy()
-                            return
-                        }
-
-                        // Display the recognized speech locally.
-                        onResult(spoken)
-
-                        // Send the original voice transcript to shared Firebase chat.
-                        status = "Sending voice message..."
-
-                        FirebaseChatRepository.sendMessage(
-                            text = spoken,
-                            senderLanguage = source
-                        ) { success, message ->
-                            status = if (success) {
-                                "Voice message sent. Translating..."
-                            } else {
-                                "Message not sent: $message"
-                            }
-                        }
-
-                        val options = TranslatorOptions.Builder()
-                            .setSourceLanguage(source)
-                            .setTargetLanguage(target)
-                            .build()
-
-                        val translator = Translation.getClient(options)
-
-                        translator.downloadModelIfNeeded()
-                            .addOnSuccessListener {
-                                translator.translate(spoken)
-                                    .addOnSuccessListener { translated ->
-                                        // Return the translation to the caller.
-                                        // Do not send it as a second Firebase message.
-                                        onResult(translated)
-
-                                        status = "Translation complete. Speaking..."
-
-                                        val ttsLanguage =
-                                            Locale.forLanguageTag(
-                                                speechLocaleTag(targetLanguage)
-                                            )
-
-                                        val result = tts.setLanguage(ttsLanguage)
-
-                                        if (
-                                            result != TextToSpeech.LANG_MISSING_DATA &&
-                                            result != TextToSpeech.LANG_NOT_SUPPORTED
-                                        ) {
-                                            tts.speak(
-                                                translated,
-                                                TextToSpeech.QUEUE_FLUSH,
-                                                null,
-                                                "voxbridge_translation"
-                                            )
-                                        } else {
-                                            status =
-                                                "Translated; speech language unavailable"
-                                        }
-
-                                        translator.close()
-                                        recognizer.destroy()
-                                    }
-                                    .addOnFailureListener {
-                                        status = "Translation failed"
-                                        translator.close()
-                                        recognizer.destroy()
-                                    }
-                            }
-                            .addOnFailureListener {
-                                status =
-                                    "Could not download translation model. Check internet."
-                                translator.close()
-                                recognizer.destroy()
-                            }
-                    }
-
-                    override fun onPartialResults(partialResults: Bundle?) {}
-
-                    override fun onEvent(
-                        eventType: Int,
-                        params: Bundle?
-                    ) {}
-                }
-            )
-
-            val intent = Intent(
-                RecognizerIntent.ACTION_RECOGNIZE_SPEECH
-            ).apply {
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE,
-                    speechLocaleTag(sourceLanguage)
-                )
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                )
-            }
-
+        try {
+            listening = true
+            status = "Listening in ${languageLabel(sourceLanguage)}..."
             recognizer.startListening(intent)
+        } catch (e: Exception) {
+            listening = false
+            status = e.localizedMessage ?: "Could not start microphone"
+            scheduleRestart()
         }
-    ) {
-        Icon(
-            imageVector = Icons.Default.Mic,
-            contentDescription = "Microphone"
-        )
-        Text(" Speak and Translate")
     }
+    restart = { startListening() }
 
-    Text(status)
-
-    Button(
-        onClick = {
-            status =
-                "LiveKit calling is not connected yet. Voice translation works separately."
+    DisposableEffect(recognizer) {
+        if (recognizer != null) recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) { listening = true }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() { status = "Processing phrase..." }
+            override fun onError(error: Int) {
+                listening = false
+                if (live && !recordOnce && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS &&
+                    error != SpeechRecognizer.ERROR_CLIENT) {
+                    status = "Reconnecting microphone..."
+                    scheduleRestart()
+                } else {
+                    if (recordOnce) { recordOnce = false; live = false }
+                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) live = false
+                    status = "Speech error $error"
+                }
+            }
+            override fun onResults(results: Bundle?) {
+                listening = false
+                val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()?.trim().orEmpty()
+                if (spoken.isBlank()) {
+                    if (recordOnce) { recordOnce = false; live = false; status = "No speech detected" }
+                    else scheduleRestart()
+                    return
+                }
+                if (recordOnce) { recordOnce = false; live = false }
+                sending = true
+                status = "Phrase captured · listening again..."
+                if (live) scheduleRestart()
+                FirebaseChatRepository.sendMessage(
+                    text = spoken, senderLanguage = sourceLanguage, messageType = "voice"
+                ) { ok, msg ->
+                    sending = false
+                    status = if (ok) "Phrase sent · ${languageLabel(sourceLanguage)}" else "Send failed: $msg"
+                    // Recognition restarts immediately; network send may finish later.
+                }
+                if (live) scheduleRestart()
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        onDispose {
+            live = false
+            pendingRestart?.let { handler.removeCallbacks(it) }
+            recognizer?.cancel()
+            recognizer?.destroy()
         }
+    }
+
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            recordOnce = !permissionForLive
+            live = permissionForLive
+            startListening()
+        }
+        else status = "Microphone permission denied"
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = p.surface)
     ) {
-        Text("Prepare LiveKit Call")
-    }
-}
-
-private fun languageCode(language: String): String? {
-    return when (language.trim().lowercase()) {
-        "en", "en-us", "english" ->
-            TranslateLanguage.ENGLISH
-
-        "ta", "ta-in", "tamil" ->
-            TranslateLanguage.TAMIL
-
-        "hi", "hi-in", "hindi" ->
-            TranslateLanguage.HINDI
-
-        else ->
-            TranslateLanguage.fromLanguageTag(language)
-    }
-}
-
-private fun speechLocaleTag(language: String): String {
-    return when (language.trim().lowercase()) {
-        "en", "english" -> "en-US"
-        "ta", "tamil" -> "ta-IN"
-        "hi", "hindi" -> "hi-IN"
-        else -> language
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("VOICE STUDIO", color = p.text, fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(if (live) "● LIVE" else if (recordOnce || listening) "● RECORDING" else "● READY",
+                    color = if (live || recordOnce) Color(0xFFEF4444) else Color(0xFF16A085),
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Text("Speaking: ${languageLabel(sourceLanguage)}", color = p.primary,
+                fontWeight = FontWeight.SemiBold)
+            Text("Choose how to speak. Other phones receive translated messages in their own selected language.",
+                color = p.muted, fontSize = 12.sp)
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !live && !recordOnce && !listening,
+                onClick = {
+                    recordOnce = true
+                    permissionForLive = false
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED) startListening()
+                    else permission.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            ) {
+                Text(if (recordOnce) "● Recording one message…" else "🎤  Record Once & Send",
+                    color = p.text)
+            }
+            if (live) {
+                Button(
+                    onClick = {
+                        live = false
+                        recordOnce = false
+                        pendingRestart?.let { handler.removeCallbacks(it) }
+                        recognizer?.cancel()
+                        listening = false
+                        status = "Live session stopped"
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC3545))
+                ) { Text("■  End Live Session", color = Color.White) }
+            } else {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !recordOnce && !listening,
+                    colors = ButtonDefaults.buttonColors(containerColor = p.primary),
+                    onClick = {
+                        permissionForLive = true
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                            == PackageManager.PERMISSION_GRANTED) {
+                            recordOnce = false
+                            live = true
+                            startListening()
+                        } else permission.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                ) { Text("🔴  Start Continuous Live Session", color = Color.White) }
+            }
+            Text(if (sending) "Sending voice message…" else status,
+                color = p.muted, fontSize = 12.sp)
+        }
     }
 }

@@ -1,10 +1,12 @@
-
 package com.voxbridge.ai
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -76,23 +79,23 @@ data class SpherePalette(
 
 private fun palette(dark: Boolean) = if (dark) {
     SpherePalette(
-        background = Color(0xFF10111C),
-        surface = Color(0xFF1B1D2D),
-        text = Color(0xFFF5F2FF),
-        muted = Color(0xFFB8B5CC),
-        primary = Color(0xFFB9A3FF),
-        incoming = Color(0xFF292B40),
-        outgoing = Color(0xFF55418B)
+        background = Color(0xFF0D111B),
+        surface = Color(0xFF192131),
+        text = Color(0xFFF7F8FF),
+        muted = Color(0xFF9DAAC1),
+        primary = Color(0xFFB6A1FF),
+        incoming = Color(0xFF242F43),
+        outgoing = Color(0xFF3A3465)
     )
 } else {
     SpherePalette(
-        background = Color(0xFFF3F6FF),
-        surface = Color.White,
-        text = Color(0xFF18233F),
-        muted = Color(0xFF65728E),
-        primary = Color(0xFF5655E8),
-        incoming = Color(0xFFFFFFFF),
-        outgoing = Color(0xFFDCE6FF)
+        background = Color(0xFFF7F8FD),
+        surface = Color(0xFFFFFFFF),
+        text = Color(0xFF1C2540),
+        muted = Color(0xFF71809A),
+        primary = Color(0xFF7056D8),
+        incoming = Color(0xFFEDF2FA),
+        outgoing = Color(0xFFEDE6FF)
     )
 }
 
@@ -177,14 +180,14 @@ private fun LoginScreen(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            "✦ SyncSphere",
-            fontSize = 34.sp,
+            "◈ SyncSphere",
+            fontSize = 38.sp,
             fontWeight = FontWeight.Bold,
             color = p.primary
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Chat across languages. Stay connected.",
+            "ONE WORLD  •  EVERY VOICE",
             color = p.muted,
             fontSize = 16.sp
         )
@@ -192,7 +195,8 @@ private fun LoginScreen(
 
         Card(
             colors = CardDefaults.cardColors(containerColor = p.surface),
-            shape = RoundedCornerShape(24.dp)
+            shape = RoundedCornerShape(28.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
             Column(Modifier.padding(20.dp)) {
                 Text(
@@ -236,7 +240,7 @@ private fun LoginScreen(
 
                 Button(
                     onClick = {
-                        if (email.isBlank() || password.length < 6) {
+                        if (email.trim().isBlank() || password.length < 6) {
                             message =
                                 "Enter a valid email and password of at least 6 characters."
                         } else {
@@ -252,13 +256,13 @@ private fun LoginScreen(
 
                             if (isSignUp) {
                                 FirebaseChatRepository.signUp(
-                                    email,
+                                    email.trim(),
                                     password,
                                     callback
                                 )
                             } else {
                                 FirebaseChatRepository.signIn(
-                                    email,
+                                    email.trim(),
                                     password,
                                     callback
                                 )
@@ -327,8 +331,26 @@ private fun ChatScreen(
     var languageMenu by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
-    var showVoice by remember { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<RemoteChatMessage?>(null) }
     val listState = rememberLazyListState()
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Sign out of SyncSphere?") },
+            text = { Text("You can sign in again to continue chatting.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    onSignOut()
+                }) { Text("Sign out") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     LaunchedEffect(chatMessages.size) {
         if (chatMessages.isNotEmpty()) listState.animateScrollToItem(chatMessages.lastIndex)
@@ -351,6 +373,24 @@ private fun ChatScreen(
         }
     }
 
+    if (pendingDelete != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete for everyone?") },
+            text = { Text("This message will disappear from all connected phones.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = pendingDelete?.id.orEmpty()
+                    pendingDelete = null
+                    FirebaseChatRepository.deleteMessage(id) { ok, result ->
+                        status = if (ok) "Deleted for everyone" else result
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -362,25 +402,28 @@ private fun ChatScreen(
         Spacer(Modifier.height(8.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
-                    Modifier.size(44.dp).background(p.primary, CircleShape),
+                    Modifier.size(48.dp).background(
+                        Brush.linearGradient(listOf(p.primary, Color(0xFF53D4D0))),
+                        CircleShape
+                    ),
                     contentAlignment = Alignment.Center
-                ) { Text("✦", color = Color.White, fontSize = 25.sp) }
+                ) { Text("◈", color = Color.White, fontSize = 25.sp) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("SyncSphere", color = p.text, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                     Text(status, color = p.muted, fontSize = 11.sp, maxLines = 1)
                 }
                 TextButton(onClick = { showOptions = !showOptions }) {
-                    Text(if (showOptions) "Close" else "⚙ Settings", color = p.primary, fontSize = 12.sp)
+                    Text(if (showOptions) "Close" else "Settings", color = p.primary, fontSize = 12.sp)
                 }
             }
         }
@@ -431,7 +474,7 @@ private fun ChatScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Dark mode", color = p.text, modifier = Modifier.weight(1f))
                         Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
-                        TextButton(onClick = onSignOut) { Text("Sign out") }
+                        TextButton(onClick = { confirmLogout = true }) { Text("Sign out") }
                     }
                 }
             }
@@ -442,35 +485,11 @@ private fun ChatScreen(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Community chat", color = p.text, fontSize = 19.sp,
+            Text("✦  Global conversation", color = p.text, fontSize = 20.sp,
                 fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Text(languageLabel(myLanguage), color = p.primary, fontSize = 12.sp)
         }
         Spacer(Modifier.height(5.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(17.dp),
-            colors = CardDefaults.cardColors(containerColor = p.surface)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("🎙 Voice messages", color = p.text, fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = { showVoice = !showVoice }) {
-                    Text(if (showVoice) "Hide ▲" else "Open ▼", color = p.primary)
-                }
-            }
-            if (showVoice) {
-                VoiceTranslationControls(
-                    p = p,
-                    sourceLanguage = myLanguage,
-                    targetLanguage = speechTargetLanguage,
-                    onTargetLanguageChange = { speechTargetLanguage = it }
-                )
-            }
-        }
         Spacer(Modifier.height(5.dp))
         LazyColumn(
             state = listState,
@@ -484,14 +503,15 @@ private fun ChatScreen(
                     isMine = message.senderId == user?.uid,
                     targetLanguage = myLanguage,
                     autoRead = autoRead,
-                    p = p
+                    p = p,
+                    onDelete = { pendingDelete = message }
                 )
             }
         }
         Spacer(Modifier.height(6.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = p.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
         ) {
@@ -503,10 +523,10 @@ private fun ChatScreen(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Type your message…") },
+                    placeholder = { Text("Write a message…") },
                     minLines = 1,
                     maxLines = 3,
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(18.dp)
                 )
                 Spacer(Modifier.width(7.dp))
                 Button(
@@ -525,20 +545,30 @@ private fun ChatScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = p.primary),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 13.dp),
                     modifier = Modifier.height(54.dp)
-                ) { Text(if (sending) "…" else "➤", color = Color.White, fontSize = 20.sp) }
+                ) { Text(if (sending) "…" else "➤", color = Color.White, fontSize = 23.sp) }
             }
+            // Real microphone and live controls stay mounted beside the composer.
+            VoiceTranslationControls(
+                p = p,
+                sourceLanguage = myLanguage,
+                targetLanguage = speechTargetLanguage,
+                onTargetLanguageChange = { speechTargetLanguage = it },
+                compact = true
+            )
         }
         Spacer(Modifier.height(6.dp))
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: RemoteChatMessage,
     isMine: Boolean,
     targetLanguage: String,
     autoRead: Boolean,
-    p: SpherePalette
+    p: SpherePalette,
+    onDelete: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -554,12 +584,13 @@ private fun MessageBubble(
                 .background(
                     color = if (isMine) p.outgoing else p.incoming,
                     shape = RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = if (isMine) 18.dp else 4.dp,
-                        bottomEnd = if (isMine) 4.dp else 18.dp
+                        topStart = 21.dp,
+                        topEnd = 21.dp,
+                        bottomStart = if (isMine) 21.dp else 6.dp,
+                        bottomEnd = if (isMine) 6.dp else 21.dp
                     )
                 )
+                .combinedClickable(onClick = {}, onLongClick = { if (isMine) onDelete() })
                 .padding(horizontal = 15.dp, vertical = 12.dp)
         ) {
             Text(
@@ -571,14 +602,15 @@ private fun MessageBubble(
             )
 
             Spacer(Modifier.height(5.dp))
-            if (message.messageType == "voice") {
-                Text("🎤 Voice transcript · finalized", color = p.primary, fontSize = 11.sp)
-            }
-            Text(message.text, color = p.text, fontSize = 16.sp, lineHeight = 23.sp)
-
+            // On the receiving phone, show the translation instead of
+            // presenting the original speech transcript as the main message.
             if (!isMine && message.senderLanguage != targetLanguage) {
-                Spacer(Modifier.height(8.dp))
                 TranslatedText(message, targetLanguage, autoRead, p)
+            } else {
+                if (message.messageType == "voice") {
+                    Text("✦ VOICE MESSAGE", color = p.primary, fontSize = 11.sp)
+                }
+                Text(message.text, color = p.text, fontSize = 16.sp, lineHeight = 23.sp)
             }
 
             Spacer(Modifier.height(6.dp))
@@ -680,7 +712,7 @@ private fun TranslatedText(
 
     Column {
         Text(
-            "TRANSLATION · ${languageLabel(targetLanguage)}",
+            "✦ TRANSLATED · ${languageLabel(targetLanguage)}",
             color = p.primary,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold
@@ -695,3 +727,4 @@ private fun TranslatedText(
         )
     }
 }
+

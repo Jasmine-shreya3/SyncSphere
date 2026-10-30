@@ -18,144 +18,85 @@ data class RemoteChatMessage(
 )
 
 object FirebaseChatRepository {
-    private val auth: FirebaseAuth
-        get() = FirebaseAuth.getInstance()
-
-    private val messages
-        get() = FirebaseFirestore.getInstance()
-            .collection("publicRooms")
-            .document("global")
-            .collection("messages")
+    private val auth get() = FirebaseAuth.getInstance()
+    private val messages get() = FirebaseFirestore.getInstance()
+        .collection("publicRooms").document("global").collection("messages")
 
     fun currentUser(): FirebaseUser? = auth.currentUser
+    fun signOut() = auth.signOut()
 
-    fun signOut() {
-        auth.signOut()
-    }
-
-    fun signIn(
-        email: String,
-        password: String,
-        callback: (Boolean, String) -> Unit
-    ) {
-        auth.signInWithEmailAndPassword(email.trim(), password)
-            .addOnCompleteListener { task ->
-                callback(
-                    task.isSuccessful,
-                    if (task.isSuccessful) "Signed in successfully"
-                    else task.exception?.localizedMessage ?: "Sign in failed"
-                )
-            }
-    }
-
-    fun signUp(
-        email: String,
-        password: String,
-        callback: (Boolean, String) -> Unit
-    ) {
-        auth.createUserWithEmailAndPassword(email.trim(), password)
-            .addOnCompleteListener { task ->
-                callback(
-                    task.isSuccessful,
-                    if (task.isSuccessful) "Account created successfully"
-                    else task.exception?.localizedMessage ?: "Sign up failed"
-                )
-            }
-    }
-
-    // Supports: sendMessage(text, language) { success, message -> ... }
-    fun sendMessage(
-        text: String,
-        senderLanguage: String,
-        callback: (Boolean, String) -> Unit
-    ) {
-        sendMessage(text, senderLanguage, callback, "text")
-    }
-
-    // Supports the older positional-callback voice call.
-    fun sendMessage(
-        text: String,
-        senderLanguage: String,
-        callback: (Boolean, String) -> Unit,
-        messageType: String
-    ) {
-        saveMessage(text, senderLanguage, messageType, callback)
-    }
-
-    // Supports: sendMessage(text = ..., senderLanguage = ...,
-    //                       messageType = "voice") { success, message -> ... }
-    fun sendMessage(
-        text: String,
-        senderLanguage: String,
-        messageType: String,
-        callback: (Boolean, String) -> Unit
-    ) {
-        saveMessage(text, senderLanguage, messageType, callback)
-    }
-
-    private fun saveMessage(
-        text: String,
-        senderLanguage: String,
-        messageType: String,
-        callback: (Boolean, String) -> Unit
-    ) {
-        val user = auth.currentUser
-        if (user == null) {
-            callback(false, "Please sign in first")
-            return
+    fun signIn(email: String, password: String, callback: (Boolean, String) -> Unit) {
+        auth.signInWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
+            callback(task.isSuccessful, if (task.isSuccessful) "Signed in successfully"
+            else task.exception?.localizedMessage ?: "Sign in failed")
         }
+    }
 
-        val cleanText = text.trim()
-        if (cleanText.isEmpty()) {
-            callback(false, "Message cannot be empty")
-            return
+    fun signUp(email: String, password: String, callback: (Boolean, String) -> Unit) {
+        auth.createUserWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
+            callback(task.isSuccessful, if (task.isSuccessful) "Account created successfully"
+            else task.exception?.localizedMessage ?: "Sign up failed")
         }
+    }
 
+    fun sendMessage(text: String, senderLanguage: String, callback: (Boolean, String) -> Unit) =
+        saveMessage(text, senderLanguage, "text", callback)
+
+    fun sendMessage(text: String, senderLanguage: String,
+                    callback: (Boolean, String) -> Unit, messageType: String) =
+        saveMessage(text, senderLanguage, messageType, callback)
+
+    fun sendMessage(text: String, senderLanguage: String, messageType: String,
+                    callback: (Boolean, String) -> Unit) =
+        saveMessage(text, senderLanguage, messageType, callback)
+
+    private fun saveMessage(text: String, senderLanguage: String, messageType: String,
+                            callback: (Boolean, String) -> Unit) {
+        val user = auth.currentUser ?: run { callback(false, "Please sign in first"); return }
+        val clean = text.trim()
+        if (clean.isEmpty()) { callback(false, "Message cannot be empty"); return }
         val data = hashMapOf<String, Any>(
-            "senderId" to user.uid,
-            "senderEmail" to (user.email ?: ""),
-            "text" to cleanText,
-            "senderLanguage" to senderLanguage.trim().lowercase().ifEmpty { "en" },
+            "senderId" to user.uid, "senderEmail" to (user.email ?: ""),
+            "text" to clean, "senderLanguage" to senderLanguage.trim().lowercase().ifEmpty { "en" },
             "messageType" to if (messageType == "voice") "voice" else "text",
-            "isFinal" to true,
-            "createdAt" to FieldValue.serverTimestamp()
+            "isFinal" to true, "createdAt" to FieldValue.serverTimestamp()
         )
-
-        messages.add(data)
-            .addOnSuccessListener { callback(true, "Message sent") }
-            .addOnFailureListener { error ->
-                callback(false, error.localizedMessage ?: "Message send failed")
-            }
+        messages.add(data).addOnSuccessListener { callback(true, "Message sent") }
+            .addOnFailureListener { callback(false, it.localizedMessage ?: "Message send failed") }
     }
 
-    fun listenMessages(
-        onMessages: (List<RemoteChatMessage>) -> Unit,
-        onError: (String) -> Unit
-    ): ListenerRegistration {
-        return messages
-            .orderBy("createdAt", Query.Direction.ASCENDING)
-            .limitToLast(100)
+    fun deleteMessage(messageId: String, callback: (Boolean, String) -> Unit) {
+        val user = auth.currentUser ?: run { callback(false, "Sign in first"); return }
+        if (messageId.isBlank()) { callback(false, "Invalid message"); return }
+        val ref = messages.document(messageId)
+        ref.get().addOnSuccessListener { snap ->
+            if (!snap.exists()) { callback(false, "Message not found"); return@addOnSuccessListener }
+            if (snap.getString("senderId") != user.uid) {
+                callback(false, "You can delete only your own messages")
+                return@addOnSuccessListener
+            }
+            ref.delete().addOnSuccessListener { callback(true, "Deleted") }
+                .addOnFailureListener { callback(false, it.localizedMessage ?: "Delete failed") }
+        }.addOnFailureListener { callback(false, it.localizedMessage ?: "Delete failed") }
+    }
+
+    fun listenMessages(onMessages: (List<RemoteChatMessage>) -> Unit,
+                       onError: (String) -> Unit): ListenerRegistration =
+        messages.orderBy("createdAt", Query.Direction.ASCENDING).limitToLast(100)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     onError(error.localizedMessage ?: "Unable to load messages")
                     return@addSnapshotListener
                 }
-
-                val chatMessages: List<RemoteChatMessage> =
-                    snapshot?.documents?.map { document ->
-                        RemoteChatMessage(
-                            id = document.id,
-                            senderId = document.getString("senderId") ?: "",
-                            senderEmail = document.getString("senderEmail") ?: "",
-                            text = document.getString("text") ?: "",
-                            senderLanguage = document.getString("senderLanguage") ?: "en",
-                            messageType = document.getString("messageType") ?: "text",
-                            createdAt = document.getTimestamp("createdAt")
-                                ?.toDate()?.time ?: 0L
-                        )
-                    } ?: emptyList()
-
-                onMessages(chatMessages)
+                onMessages(snapshot?.documents?.map { doc ->
+                    RemoteChatMessage(
+                        id = doc.id, senderId = doc.getString("senderId") ?: "",
+                        senderEmail = doc.getString("senderEmail") ?: "",
+                        text = doc.getString("text") ?: "",
+                        senderLanguage = doc.getString("senderLanguage") ?: "en",
+                        messageType = doc.getString("messageType") ?: "text",
+                        createdAt = doc.getTimestamp("createdAt")?.toDate()?.time ?: 0L
+                    )
+                } ?: emptyList())
             }
-    }
 }
